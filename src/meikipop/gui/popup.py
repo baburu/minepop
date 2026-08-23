@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 import sys  # Explicitly imported to prevent path/exiting conflicts
+import time  # Imported for precision step-by-step loading timers (Suggestion 1)
 from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, QPoint, QSize, QEvent, pyqtSignal
@@ -55,6 +56,10 @@ class Popup(QWidget):
 
             # --- NO-REPETITION CLIPBOARD TRACKER ---
             self._last_copied_word = ""
+
+            # --- LOADING TIMER (Suggestion 1) ---
+            self._loading_start_time = 0.0
+            self.loading_label = None
 
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.process_latest_data_loop)
@@ -209,27 +214,6 @@ class Popup(QWidget):
         logger.debug(f"[CALIBRATE] Empirically found {self.def_chars_per_line} definition chars/line")
         self.is_calibrated = True
 
-    def _find_chars_for_width(self, metrics: QFontMetrics, name: str, width_budget: float) -> int:
-        low = 1
-        high = 500
-        best_fit = 1
-        width_budget = max(width_budget, 1)
-
-        while low <= high:
-            mid = (low + high) // 2
-            if mid == 0: break
-
-            test_string = 'x' * mid
-            current_width = metrics.horizontalAdvance(test_string)
-
-            if current_width <= width_budget:
-                best_fit = mid
-                low = mid + 1
-            else:
-                high = mid - 1
-
-        return best_fit if best_fit > 0 else 50
-
     def set_latest_data(self, data):
         with self._data_lock:
             # If the user is currently hovering the popup, ignore updates
@@ -249,14 +233,28 @@ class Popup(QWidget):
             return self._latest_data
 
     def _show_loading_state(self):
-        """Displays a clean scanning state instantly on Shift keypress."""
+        """Displays a clean scanning state instantly on Shift keypress with dynamic sequential statuses."""
         self._clear_entry_widgets()
         
-        loading_label = QLabel("Scanning screen...")
-        loading_label.setStyleSheet("color: #888; font-size: 14px; font-style: italic; padding: 10px;")
+        # Track start time for the sequential steps
+        self._loading_start_time = time.time()
+        accent = config.color_highlight_word
         
-        self.content_layout.addWidget(loading_label)
-        self._entry_widgets.append(loading_label)
+        self.loading_label = QLabel("📸 Capturing screen...")
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.setStyleSheet(f"""
+            QLabel {{
+                color: {accent};
+                font-size: 15px;
+                font-family: "{config.font_family}";
+                font-weight: bold;
+                font-style: italic;
+                padding: 15px;
+            }}
+        """)
+        
+        self.content_layout.addWidget(self.loading_label)
+        self._entry_widgets.append(self.loading_label)
         
         self.setFixedSize(450, 150)  # Start with a safe height for the loading state (width 450)
         self.show_popup()
@@ -295,6 +293,16 @@ class Popup(QWidget):
 
             data_present = bool(self._latest_data)
             hotkey_active = self.input_loop.is_virtual_hotkey_down()
+
+            # --- DYNAMIC PROGRESSIVE TIMERS (Suggestion 1) ---
+            if self.toggle_active and not data_present and self.loading_label:
+                elapsed = (time.time() - self._loading_start_time) * 1000  # in ms
+                if elapsed < 250:
+                    self.loading_label.setText("📸 Capturing screen...")
+                elif 250 <= elapsed < 750:
+                    self.loading_label.setText("🧠 Extracting text characters...")
+                else:
+                    self.loading_label.setText("🌐 Querying OCR server...")
 
             # --- TOGGLE FUNCTIONALITY ---
             # Detect the moment the hotkey is first tapped (rising edge)
@@ -339,7 +347,7 @@ class Popup(QWidget):
             print(f"\nCRITICAL ERROR IN POPUP UPDATE LOOP:\n{e}\n", flush=True)
 
     # ------------------------------------------------------------------ #
-    # Row building
+    # Row building (Simplified without dynamic layout shrinks)
     # ------------------------------------------------------------------ #
     def _clear_entry_widgets(self):
         # Recursively clear all layouts and widgets safely to avoid memory or orphaning leaks (Requirement 6)
@@ -687,6 +695,8 @@ class Popup(QWidget):
         self.hide()
         self.is_visible = False
         self.toggle_active = False  # Reset toggle when manually hiding
+        self._loading_start_time = 0.0  # Reset Suggestion 1 timer
+        self.loading_label = None
         
         # Reset the latest data to None when the popup is fully dismissed,
         # so that a fresh scan can be triggered later.
