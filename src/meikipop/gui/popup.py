@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 import sys  # Explicitly imported to prevent path/exiting conflicts
-import time  # Imported for precision step-by-step loading timers (Suggestion 1)
+import time  # Imported for precision step-by-step loading timers
 from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, QPoint, QSize, QEvent, pyqtSignal
@@ -13,12 +13,13 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication, QPushButton, QSizePolicy, QScrollArea
 )
 
+# Imports reverted back to 'meikipop' to match your folder structure
 from meikipop.anki.ankiconnect import AnkiConnectClient, AnkiConnectError, MineableWord, render_field_mapping
 from meikipop.config.config import config, IS_MACOS
 from meikipop.dictionary.lookup import DictionaryEntry, KanjiEntry
 from meikipop.gui.magpie_manager import magpie_manager
 
-# macOS-specific imports for focus management
+# macOS-specific imports for focus management (Harmless warning on Windows)
 if IS_MACOS:
     try:
         import Quartz
@@ -57,7 +58,7 @@ class Popup(QWidget):
             # --- NO-REPETITION CLIPBOARD TRACKER ---
             self._last_copied_word = ""
 
-            # --- LOADING TIMER (Suggestion 1) ---
+            # --- LOADING TIMER ---
             self._loading_start_time = 0.0
             self.loading_label = None
 
@@ -92,7 +93,7 @@ class Popup(QWidget):
             self._apply_frame_stylesheet()
             
             # --- FIXED SIZE & SCROLLBAR WORKFLOW ---
-            self.resize(450, 600)  # Safe default initialization size to prevent layout assertions
+            self.resize(450, 600)  # Safe default initialization size
 
             # Vertical Scroll Area Setup
             self.scroll_area = QScrollArea()
@@ -182,13 +183,6 @@ class Popup(QWidget):
 
         actual_font = self.probe_label.font()
         font_info = QFontInfo(actual_font)
-        logger.debug(f"[FONT DEBUG] Requested font family: '{config.font_family}' (or default)")
-        logger.debug(f"[FONT DEBUG]   -> Actual resolved font family: '{font_info.family()}'")
-        logger.debug(f"[FONT DEBUG]   -> Actual style name: '{font_info.styleName()}'")
-        logger.debug(f"[FONT DEBUG]   -> Actual point size: {font_info.pointSize()}")
-        logger.debug(f"[FONT DEBUG]   -> Actual pixel size: {font_info.pixelSize()}")
-        logger.debug(f"[FONT DEBUG]   -> Is it bold? {font_info.bold()}")
-
         margins = self.content_layout.contentsMargins()
         border_width = 1
         horizontal_padding = margins.left() + margins.right() + (border_width * 2)
@@ -199,7 +193,7 @@ class Popup(QWidget):
         header_font = QFont(config.font_family)
         header_font.setPixelSize(config.font_size_header)
         header_metrics = QFontMetrics(header_font)
-        # Reserve room for the mine button so header text doesn't get squeezed against it.
+        
         self.header_chars_per_line = self._find_chars_for_width(
             header_metrics, "Header", self.max_content_width - MINE_BUTTON_SIZE - MINE_BUTTON_GAP
         )
@@ -209,10 +203,28 @@ class Popup(QWidget):
         def_metrics = QFontMetrics(def_font)
         self.def_chars_per_line = self._find_chars_for_width(def_metrics, "Definition", self.max_content_width)
 
-        logger.debug(f"[CALIBRATE] Max content width: {self.max_content_width}px")
-        logger.debug(f"[CALIBRATE] Empirically found {self.header_chars_per_line} header chars/line")
-        logger.debug(f"[CALIBRATE] Empirically found {self.def_chars_per_line} definition chars/line")
         self.is_calibrated = True
+
+    def _find_chars_for_width(self, metrics: QFontMetrics, name: str, width_budget: float) -> int:
+        low = 1
+        high = 500
+        best_fit = 1
+        width_budget = max(width_budget, 1)
+
+        while low <= high:
+            mid = (low + high) // 2
+            if mid == 0: break
+
+            test_string = 'x' * mid
+            current_width = metrics.horizontalAdvance(test_string)
+
+            if current_width <= width_budget:
+                best_fit = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        return best_fit if best_fit > 0 else 50
 
     def set_latest_data(self, data):
         with self._data_lock:
@@ -236,7 +248,6 @@ class Popup(QWidget):
         """Displays a clean scanning state instantly on Shift keypress with dynamic sequential statuses."""
         self._clear_entry_widgets()
         
-        # Track start time for the sequential steps
         self._loading_start_time = time.time()
         accent = config.color_highlight_word
         
@@ -294,7 +305,7 @@ class Popup(QWidget):
             data_present = bool(self._latest_data)
             hotkey_active = self.input_loop.is_virtual_hotkey_down()
 
-            # --- DYNAMIC PROGRESSIVE TIMERS (Suggestion 1) ---
+            # --- DYNAMIC PROGRESSIVE TIMERS ---
             if self.toggle_active and not data_present and self.loading_label:
                 elapsed = (time.time() - self._loading_start_time) * 1000  # in ms
                 if elapsed < 250:
@@ -532,6 +543,7 @@ class Popup(QWidget):
                 border: 1px solid {accent};
                 border-radius: {MINE_BUTTON_SIZE // 2}px;
                 font-weight: bold;
+                padding: 0px;
             }}
             QPushButton#mineButton:hover {{
                 background-color: {accent};
