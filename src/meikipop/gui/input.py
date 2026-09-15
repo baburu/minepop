@@ -154,6 +154,7 @@ class InputLoop(threading.Thread):
         logger.debug("Input thread started.")
         last_mouse_pos = (0, 0)
         hotkey_was_pressed = False
+        alt_was_pressed = False
 
         while self.shared_state.running:
             if not config.is_enabled:
@@ -166,21 +167,32 @@ class InputLoop(threading.Thread):
                 except Exception:
                     hotkey_is_pressed = False
 
-                # trigger screenshots + ocr in manual mode
-                if hotkey_is_pressed and not hotkey_was_pressed and not config.auto_scan_mode:
-                    logger.info(f"Input: Hotkey '{config.hotkey}' pressed. Triggering screenshot.")
+                # Safely monitor Alt key status across platforms
+                try:
+                    alt_is_pressed = keyboard.is_pressed('alt') if not IS_LINUX and not IS_MACOS else False
+                except Exception:
+                    alt_is_pressed = False
+
+                # Trigger screenshots + OCR in manual mode on Hotkey OR Alt press
+                should_trigger_manual = (
+                    (hotkey_is_pressed and not hotkey_was_pressed) or
+                    (alt_is_pressed and not alt_was_pressed)
+                )
+
+                if should_trigger_manual and not config.auto_scan_mode:
+                    logger.info("Input: Screenshot triggered by hotkey or Alt.")
                     self.shared_state.screenshot_trigger_event.set()
 
-                # trigger initial screenshots + ocr in auto mode
+                # Trigger initial screenshots + OCR in auto mode
                 if not self.started_auto_mode and config.auto_scan_mode:
                     self.shared_state.screenshot_trigger_event.set()
                 self.started_auto_mode = config.auto_scan_mode
 
-                # trigger screenshots + ocr in auto-on-mouse-move mode
+                # Trigger screenshots + OCR in auto-on-mouse-move mode
                 if config.auto_scan_mode and config.auto_scan_on_mouse_move and current_mouse_pos != last_mouse_pos:
                     self.shared_state.screenshot_trigger_event.set()
 
-                # trigger hit_scans + lookups
+                # Trigger hit_scans + lookups
                 if current_mouse_pos != last_mouse_pos:
                     self.shared_state.hit_scan_queue.trigger()
 
@@ -189,6 +201,7 @@ class InputLoop(threading.Thread):
 
                 last_mouse_pos = current_mouse_pos
                 hotkey_was_pressed = hotkey_is_pressed
+                alt_was_pressed = alt_is_pressed
                 self.hotkey_is_pressed = hotkey_is_pressed
             except:
                 logger.exception("An unexpected error occurred in the input loop. Continuing...")

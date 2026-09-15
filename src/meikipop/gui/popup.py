@@ -13,13 +13,12 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication, QPushButton, QSizePolicy, QScrollArea
 )
 
-# Imports reverted back to 'meikipop' to match your folder structure
 from meikipop.anki.ankiconnect import AnkiConnectClient, AnkiConnectError, MineableWord, render_field_mapping
 from meikipop.config.config import config, IS_MACOS
 from meikipop.dictionary.lookup import DictionaryEntry, KanjiEntry
 from meikipop.gui.magpie_manager import magpie_manager
 
-# macOS-specific imports for focus management (Harmless warning on Windows)
+# macOS-specific imports for focus management
 if IS_MACOS:
     try:
         import Quartz
@@ -279,26 +278,36 @@ class Popup(QWidget):
             if latest_data and latest_data != self._last_latest_data:
                 self._build_entries(latest_data)
                 
-                # Locked strictly to exactly 450x600 pixels (Requirement 6 & Size Fix)
+                # Locked strictly to exactly 450x600 pixels
                 self.setFixedSize(450, 600)
 
                 # Re-trigger position alignment now that we know the final height of the data
                 mouse_pos = QCursor.pos()
                 self.move_to(mouse_pos.x(), mouse_pos.y())
 
-                # === AUTO-COPY FULL SENTENCE TO CLIPBOARD WITHOUT REPETITIONS ===
-                if len(latest_data) > 0:
+            # === COPY TO CLIPBOARD: ONLY WHEN HOLDING ALT ===
+            is_alt_held = False
+            try:
+                import keyboard
+                is_alt_held = keyboard.is_pressed('alt')
+            except Exception:
+                pass
+
+            if is_alt_held:
+                if latest_data and len(latest_data) > 0:
                     first_entry = latest_data[0]
                     scanned_word = getattr(first_entry, 'written_form', '') or getattr(first_entry, 'character', '')
                     sentence_text = getattr(first_entry, 'sentence', '').strip()
                     
-                    # Use the full sentence if available; otherwise, fall back to the single word
                     target_text = sentence_text if sentence_text else scanned_word
                     
-                    # Only copy if it is a new line (prevents spamming clipboard history)
+                    # Only copy if it is a new line (prevents repeating lines in your texthooker)
                     if target_text and target_text != self._last_copied_word:
                         QApplication.clipboard().setText(target_text)
                         self._last_copied_word = target_text
+            else:
+                # Reset when Alt is released so hovering over the same sentence later with Alt copies it again
+                self._last_copied_word = ""
 
             self._last_latest_data = latest_data
 
@@ -316,7 +325,6 @@ class Popup(QWidget):
                     self.loading_label.setText("🌐 Querying OCR server...")
 
             # --- TOGGLE FUNCTIONALITY ---
-            # Detect the moment the hotkey is first tapped (rising edge)
             if hotkey_active and not self._hotkey_was_active_last_tick:
                 if self.is_visible:
                     # If popup is visible, press hotkey to toggle it OFF
@@ -328,7 +336,6 @@ class Popup(QWidget):
                     mouse_pos = QCursor.pos()
                     self.move_to(mouse_pos.x(), mouse_pos.y())
                     
-                    # If data has not yet arrived, show the loading state immediately!
                     if not data_present:
                         self._show_loading_state()
                     
@@ -348,7 +355,7 @@ class Popup(QWidget):
             else:
                 self.hide_popup()
 
-            # Follow cursor only if we are not hovering over the popup and we are NOT locked on via toggle.
+            # Follow cursor only if we are not hovering over the popup and we are NOT locked on via toggle
             if not self.is_pinned and not self.toggle_active:
                 if hotkey_active:
                     mouse_pos = QCursor.pos()
@@ -361,7 +368,6 @@ class Popup(QWidget):
     # Row building (Simplified without dynamic layout shrinks)
     # ------------------------------------------------------------------ #
     def _clear_entry_widgets(self):
-        # Recursively clear all layouts and widgets safely to avoid memory or orphaning leaks (Requirement 6)
         while self.content_layout.count() > 0:
             item = self.content_layout.takeAt(0)
             if item.widget():
@@ -391,12 +397,10 @@ class Popup(QWidget):
             self.content_layout.addWidget(row)
             self._entry_widgets.append(row)
 
-        # Inject vertical stretch spacer at the bottom (Requirement 5: Wasted Space Fix)
-        # This tightly packs all content rows to the top, eliminating empty spacing gaps.
+        # Inject vertical stretch spacer at the bottom
         self.content_layout.addStretch(1)
         self.content_layout.activate()
         
-        # Calculate the natural layout height to tell the caller how big to size the window
         natural_height = self.content_layout.sizeHint().height() + 30
         return natural_height
 
@@ -470,8 +474,7 @@ class Popup(QWidget):
             sense_html = f'<div style="margin-bottom: 5px; line-height: 1.45;">'
             sense_html += f'<b>{idx + 1}.</b> ' if config.show_all_glosses else ""
             
-            # Part-of-Speech tags completely excluded to satisfy Requirement 2
-            
+            # Part-of-Speech tags completely excluded
             if config.show_tags and tags_list:
                 tags_str = f'[{", ".join(tags_list)}] '
                 sense_html += f'<span style="color:{c_text}; font-size:{config.font_size_definitions - 2}px; opacity:0.7;">{tags_str}</span>'
@@ -521,13 +524,11 @@ class Popup(QWidget):
     def _make_mine_button(self, entry: DictionaryEntry) -> QPushButton:
         button = QPushButton("+")
         button.setProperty("class", "mineButton")
-        button.setObjectName("mineButton")  # for the stylesheet selector below
+        button.setObjectName("mineButton")
         button.setFixedSize(MINE_BUTTON_SIZE, MINE_BUTTON_SIZE)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         
-        # Prevent button click focus shifts from generating focusOut dismissal triggers
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        
         button.setStyleSheet(self._mine_button_stylesheet())
         button.setToolTip("Mine into Anki")
         button.clicked.connect(lambda _checked=False, e=entry, b=button: self._mine_entry(e, b))
@@ -570,28 +571,22 @@ class Popup(QWidget):
             self.mine_finished.emit(button, "err", "Set a deck, note type and field mapping in Settings → Anki first")
             return
 
-        # --- DYNAMIC RICH NESTED LIST GENERATION ---
+        # Build clean HTML list containing all meanings
         html_senses = []
         for sense in entry.senses:
             glosses = sense.get('glosses', [])
             if not glosses:
                 continue
             
-            # POS strings are excluded entirely from Anki card definitions for clean listings (Requirement 2)
-            
             if len(glosses) == 1:
-                # Single meaning/synonym
                 html_senses.append(f"<li>{glosses[0]}</li>")
             else:
-                # Multiple synonyms under this sense (rendered as circular sub-bullets)
                 bullets = "".join(f"<li>{g}</li>" for g in glosses)
                 html_senses.append(f"<li><ul style='list-style-type: circle; margin-top: 2px; margin-bottom: 2px; padding-left: 20px;'>{bullets}</ul></li>")
         
-        # Combine into a structured, padded ordered list (1., 2., 3...)
         beautiful_glossary = f"<ol style='margin-top: 2px; margin-bottom: 2px; padding-left: 20px; line-height: 1.45;'>{''.join(html_senses)}</ol>"
 
-        # Map both the short and full glossary variables to our rich list structure
-        # Formats the furigana into standard Kanji[Kana] layout for Anki's native filter (Requirement 2)
+        # Native Anki Furigana syntax: Kanji[Kana]
         if entry.written_form != entry.reading:
             furigana_reading = f"{entry.written_form}[{entry.reading}]"
         else:
@@ -668,25 +663,21 @@ class Popup(QWidget):
         screen = QApplication.screenAt(cursor_point) or QApplication.primaryScreen()
         screen_geo = screen.geometry()
         
-        # Locked strictly to exactly 450x600 pixels (Requirement 6 & Size Fix)
         popup_width = 450
-        popup_height = 600
+        popup_height = self.height()
         offset = 15
 
         ratio = screen.devicePixelRatio()
         
-        # Standard cursor-arrow offset adjustments (+4px, +6px) 
-        # to compensate for logical arrow tips on High-DPI monitors (Requirement 6: Precision Fix)
+        # Standard cursor-arrow offset adjustments (+4px, +6px)
         adjusted_x = int(x) + 4
         adjusted_y = int(y) + 6
         
         x, y = magpie_manager.transform_raw_to_visual((adjusted_x, adjusted_y), ratio)
 
-        # Standard centered positioning under the cursor
         final_x = x - (popup_width / 2)
         final_y = y + offset
 
-        # Smooth boundary adjustment: slide popup inside screen if it goes off bottom/sides
         if final_y + popup_height > screen_geo.bottom():
             final_y = screen_geo.bottom() - popup_height - 10
 
@@ -695,7 +686,6 @@ class Popup(QWidget):
         if final_x + popup_width > screen_geo.right():
             final_x = screen_geo.right() - popup_width - 10
 
-        # Protect against clipping top-of-screen bounds
         if final_y < screen_geo.top():
             final_y = screen_geo.top()
 
@@ -706,12 +696,10 @@ class Popup(QWidget):
             return
         self.hide()
         self.is_visible = False
-        self.toggle_active = False  # Reset toggle when manually hiding
-        self._loading_start_time = 0.0  # Reset Suggestion 1 timer
+        self.toggle_active = False
+        self._loading_start_time = 0.0
         self.loading_label = None
         
-        # Reset the latest data to None when the popup is fully dismissed,
-        # so that a fresh scan can be triggered later.
         with self._data_lock:
             self._latest_data = None
             
