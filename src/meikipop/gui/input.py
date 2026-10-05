@@ -95,12 +95,11 @@ class MacOSKeyboardController:
         self.hotkey_str = hotkey_str.lower()
         self.modifiers = self.hotkey_str.split('+')
 
-        # Map common hotkey strings to macOS key codes
         key_mapping = {
-            'shift': [56, 60],  # Left and Right Shift
-            'ctrl': [59, 62],   # Left and Right Control
-            'alt': [58, 61],    # Left and Right Option/Alt
-            'cmd': [55, 54],    # Left and Right Command
+            'shift': [56, 60],
+            'ctrl': [59, 62],
+            'alt': [58, 61],
+            'cmd': [55, 54],
         }
 
         for mod in self.modifiers:
@@ -112,10 +111,7 @@ class MacOSKeyboardController:
 
     def is_hotkey_pressed(self) -> bool:
         try:
-            # Get current modifier flags
             flags = NSEvent.modifierFlags()
-
-            # Iterate through all required modifiers in the combo
             for mod in self.modifiers:
                 if mod == 'shift':
                     if not (flags & (1 << 17) or flags & (1 << 18)):
@@ -145,7 +141,7 @@ class InputLoop(threading.Thread):
             self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
         elif IS_MACOS:
             self.keyboard_controller = MacOSKeyboardController(self.hotkey_str)
-        else: # IS_WINDOWS
+        else:
             self.keyboard_controller = WindowsKeyboardController(self.hotkey_str)
 
         self.started_auto_mode = False
@@ -154,7 +150,6 @@ class InputLoop(threading.Thread):
         logger.debug("Input thread started.")
         last_mouse_pos = (0, 0)
         hotkey_was_pressed = False
-        alt_was_pressed = False
 
         while self.shared_state.running:
             if not config.is_enabled:
@@ -167,20 +162,9 @@ class InputLoop(threading.Thread):
                 except Exception:
                     hotkey_is_pressed = False
 
-                # Safely monitor Alt key status across platforms
-                try:
-                    alt_is_pressed = keyboard.is_pressed('alt') if not IS_LINUX and not IS_MACOS else False
-                except Exception:
-                    alt_is_pressed = False
-
-                # Trigger screenshots + OCR in manual mode on Hotkey OR Alt press
-                should_trigger_manual = (
-                    (hotkey_is_pressed and not hotkey_was_pressed) or
-                    (alt_is_pressed and not alt_was_pressed)
-                )
-
-                if should_trigger_manual and not config.auto_scan_mode:
-                    logger.info("Input: Screenshot triggered by hotkey or Alt.")
+                # Trigger screenshots + OCR in manual mode on configured hotkey press
+                if hotkey_is_pressed and not hotkey_was_pressed and not config.auto_scan_mode:
+                    logger.info(f"Input: Hotkey '{config.hotkey}' pressed. Triggering screenshot.")
                     self.shared_state.screenshot_trigger_event.set()
 
                 # Trigger initial screenshots + OCR in auto mode
@@ -201,7 +185,6 @@ class InputLoop(threading.Thread):
 
                 last_mouse_pos = current_mouse_pos
                 hotkey_was_pressed = hotkey_is_pressed
-                alt_was_pressed = alt_is_pressed
                 self.hotkey_is_pressed = hotkey_is_pressed
             except:
                 logger.exception("An unexpected error occurred in the input loop. Continuing...")
@@ -220,12 +203,22 @@ class InputLoop(threading.Thread):
             self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
         elif IS_MACOS:
             self.keyboard_controller = MacOSKeyboardController(self.hotkey_str)
-        else: # IS_WINDOWS
+        else:
             self.keyboard_controller = WindowsKeyboardController(self.hotkey_str)
 
     @staticmethod
     def get_mouse_pos():
-        with mouse.Controller() as mc:
-            pos = mc.position
-            # Convert floats to integers for QPoint compatibility
-            return (int(pos[0]), int(pos[1]))
+        try:
+            with mouse.Controller() as mc:
+                pos = mc.position
+                if pos is not None and len(pos) >= 2 and pos[0] is not None and pos[1] is not None:
+                    return (int(pos[0]), int(pos[1]))
+        except Exception:
+            pass
+
+        try:
+            from PyQt6.QtGui import QCursor
+            qpos = QCursor.pos()
+            return (qpos.x(), qpos.y())
+        except Exception:
+            return (0, 0)

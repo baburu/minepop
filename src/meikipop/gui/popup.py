@@ -2,8 +2,8 @@
 import json
 import logging
 import threading
-import sys  # Explicitly imported to prevent path/exiting conflicts
-import time  # Imported for precision step-by-step loading timers
+import sys
+import time
 from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, QPoint, QSize, QEvent, pyqtSignal
@@ -18,7 +18,6 @@ from meikipop.config.config import config, IS_MACOS
 from meikipop.dictionary.lookup import DictionaryEntry, KanjiEntry
 from meikipop.gui.magpie_manager import magpie_manager
 
-# macOS-specific imports for focus management
 if IS_MACOS:
     try:
         import Quartz
@@ -28,12 +27,11 @@ if IS_MACOS:
 logger = logging.getLogger(__name__)
 
 MINE_BUTTON_SIZE = 20
-MINE_BUTTON_GAP = 6  # horizontal space reserved for the button next to the header text
+MINE_BUTTON_GAP = 6
 
 
 class Popup(QWidget):
-    # Marshals AnkiConnect results (which happen on a background thread) back to the GUI thread.
-    mine_finished = pyqtSignal(object, str, str)  # (button, status, message)
+    mine_finished = pyqtSignal(object, str, str)
 
     def __init__(self, shared_state, input_loop):
         try:
@@ -47,17 +45,13 @@ class Popup(QWidget):
             self.input_loop = input_loop
 
             self.is_visible = False
-            self.is_pinned = False  # True while the mouse is hovering the popup itself
-            self._entry_widgets = []  # currently-built per-entry row widgets, kept so we can tear them down
+            self.is_pinned = False
+            self._entry_widgets = []
 
-            # --- TOGGLE LOGIC STATES ---
             self.toggle_active = False
             self._hotkey_was_active_last_tick = False
-
-            # --- NO-REPETITION CLIPBOARD TRACKER ---
             self._last_copied_word = ""
 
-            # --- LOADING TIMER ---
             self._loading_start_time = 0.0
             self.loading_label = None
 
@@ -83,25 +77,20 @@ class Popup(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             self.setStyleSheet("background: transparent;")
 
-            # Base layout
             main_layout = QVBoxLayout(self)
             main_layout.setContentsMargins(0, 0, 0, 0)
 
-            # Outer styled Frame
             self.frame = QFrame()
             self._apply_frame_stylesheet()
             
-            # --- FIXED SIZE & SCROLLBAR WORKFLOW ---
-            self.resize(450, 600)  # Safe default initialization size
+            self.resize(450, 600)
 
-            # Vertical Scroll Area Setup
             self.scroll_area = QScrollArea()
             self.scroll_area.setWidgetResizable(True)
             self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self.scroll_area.setStyleSheet("background: transparent; border: none;")
 
-            # Inner Scroll Content Widget
             self.scroll_content = QWidget()
             self.scroll_content.setStyleSheet("background: transparent; border: none;")
             self.content_layout = QVBoxLayout(self.scroll_content)
@@ -110,7 +99,6 @@ class Popup(QWidget):
 
             self.scroll_area.setWidget(self.scroll_content)
 
-            # Frame layout containing only the Scroll Area
             frame_layout = QVBoxLayout(self.frame)
             frame_layout.setContentsMargins(0, 0, 0, 0)
             frame_layout.addWidget(self.scroll_area)
@@ -124,10 +112,6 @@ class Popup(QWidget):
             traceback.print_exc()
             sys.exit(1)
 
-    # ------------------------------------------------------------------ #
-    # Pin-on-hover: while the cursor is over the popup itself, stop it
-    # from chasing the mouse / auto-hiding so the user can click "+".
-    # ------------------------------------------------------------------ #
     def eventFilter(self, obj, event):
         if obj is self.frame:
             if event.type() == QEvent.Type.Enter:
@@ -179,7 +163,6 @@ class Popup(QWidget):
 
     def _calibrate_empirically(self):
         logger.debug("--- Calibrating Font Metrics Empirically (One-Time) ---")
-
         actual_font = self.probe_label.font()
         font_info = QFontInfo(actual_font)
         margins = self.content_layout.contentsMargins()
@@ -201,7 +184,6 @@ class Popup(QWidget):
         def_font.setPixelSize(config.font_size_definitions)
         def_metrics = QFontMetrics(def_font)
         self.def_chars_per_line = self._find_chars_for_width(def_metrics, "Definition", self.max_content_width)
-
         self.is_calibrated = True
 
     def _find_chars_for_width(self, metrics: QFontMetrics, name: str, width_budget: float) -> int:
@@ -213,10 +195,8 @@ class Popup(QWidget):
         while low <= high:
             mid = (low + high) // 2
             if mid == 0: break
-
             test_string = 'x' * mid
             current_width = metrics.horizontalAdvance(test_string)
-
             if current_width <= width_budget:
                 best_fit = mid
                 low = mid + 1
@@ -227,16 +207,11 @@ class Popup(QWidget):
 
     def set_latest_data(self, data):
         with self._data_lock:
-            # If the user is currently hovering the popup, ignore updates
             if self.is_pinned:
                 return
-                
-            # If the popup is locked on via toggle:
             if self.toggle_active:
-                # If we already have a searched word locked in, ignore any new updates
                 if self._latest_data:
                     return
-            
             self._latest_data = data
 
     def get_latest_data(self):
@@ -244,9 +219,7 @@ class Popup(QWidget):
             return self._latest_data
 
     def _show_loading_state(self):
-        """Displays a clean scanning state instantly on Shift keypress with dynamic sequential statuses."""
         self._clear_entry_widgets()
-        
         self._loading_start_time = time.time()
         accent = config.color_highlight_word
         
@@ -265,8 +238,7 @@ class Popup(QWidget):
         
         self.content_layout.addWidget(self.loading_label)
         self._entry_widgets.append(self.loading_label)
-        
-        self.setFixedSize(450, 150)  # Start with a safe height for the loading state (width 450)
+        self.setFixedSize(450, 150)
         self.show_popup()
 
     def process_latest_data_loop(self):
@@ -277,23 +249,19 @@ class Popup(QWidget):
             latest_data = self.get_latest_data()
             if latest_data and latest_data != self._last_latest_data:
                 self._build_entries(latest_data)
-                
-                # Locked strictly to exactly 450x600 pixels
                 self.setFixedSize(450, 600)
 
-                # Re-trigger position alignment now that we know the final height of the data
                 mouse_pos = QCursor.pos()
                 self.move_to(mouse_pos.x(), mouse_pos.y())
 
-            # === COPY TO CLIPBOARD: ONLY WHEN HOLDING ALT ===
-            is_alt_held = False
+            # === COPY TO CLIPBOARD: DYNAMICALLY USES CONFIGURED HOTKEY ===
+            is_hotkey_held = False
             try:
-                import keyboard
-                is_alt_held = keyboard.is_pressed('alt')
+                is_hotkey_held = self.input_loop.keyboard_controller.is_hotkey_pressed()
             except Exception:
                 pass
 
-            if is_alt_held:
+            if is_hotkey_held:
                 if latest_data and len(latest_data) > 0:
                     first_entry = latest_data[0]
                     scanned_word = getattr(first_entry, 'written_form', '') or getattr(first_entry, 'character', '')
@@ -301,12 +269,10 @@ class Popup(QWidget):
                     
                     target_text = sentence_text if sentence_text else scanned_word
                     
-                    # Only copy if it is a new line (prevents repeating lines in your texthooker)
                     if target_text and target_text != self._last_copied_word:
                         QApplication.clipboard().setText(target_text)
                         self._last_copied_word = target_text
             else:
-                # Reset when Alt is released so hovering over the same sentence later with Alt copies it again
                 self._last_copied_word = ""
 
             self._last_latest_data = latest_data
@@ -314,9 +280,9 @@ class Popup(QWidget):
             data_present = bool(self._latest_data)
             hotkey_active = self.input_loop.is_virtual_hotkey_down()
 
-            # --- DYNAMIC PROGRESSIVE TIMERS ---
+            # Progressive Loading Stepper
             if self.toggle_active and not data_present and self.loading_label:
-                elapsed = (time.time() - self._loading_start_time) * 1000  # in ms
+                elapsed = (time.time() - self._loading_start_time) * 1000
                 if elapsed < 250:
                     self.loading_label.setText("📸 Capturing screen...")
                 elif 250 <= elapsed < 750:
@@ -324,14 +290,12 @@ class Popup(QWidget):
                 else:
                     self.loading_label.setText("🌐 Querying OCR server...")
 
-            # --- TOGGLE FUNCTIONALITY ---
+            # Toggle Behavior
             if hotkey_active and not self._hotkey_was_active_last_tick:
                 if self.is_visible:
-                    # If popup is visible, press hotkey to toggle it OFF
                     self.toggle_active = False
                     self.hide_popup()
                 else:
-                    # If popup is hidden, toggle it ON instantly
                     self.toggle_active = True
                     mouse_pos = QCursor.pos()
                     self.move_to(mouse_pos.x(), mouse_pos.y())
@@ -341,12 +305,10 @@ class Popup(QWidget):
                     
             self._hotkey_was_active_last_tick = hotkey_active
 
-            # Keep popup visible if pinned, hotkey active, or locked on via toggle
             should_show = data_present and config.is_enabled and (
                 self.is_pinned or hotkey_active or self.toggle_active
             )
 
-            # In manual toggle mode, if we are loading, we still show the popup container
             if self.toggle_active and not data_present:
                 should_show = True
 
@@ -355,7 +317,6 @@ class Popup(QWidget):
             else:
                 self.hide_popup()
 
-            # Follow cursor only if we are not hovering over the popup and we are NOT locked on via toggle
             if not self.is_pinned and not self.toggle_active:
                 if hotkey_active:
                     mouse_pos = QCursor.pos()
@@ -364,9 +325,6 @@ class Popup(QWidget):
             logger.exception("CRITICAL ERROR IN POPUP UPDATE LOOP: %s", e)
             print(f"\nCRITICAL ERROR IN POPUP UPDATE LOOP:\n{e}\n", flush=True)
 
-    # ------------------------------------------------------------------ #
-    # Row building (Simplified without dynamic layout shrinks)
-    # ------------------------------------------------------------------ #
     def _clear_entry_widgets(self):
         while self.content_layout.count() > 0:
             item = self.content_layout.takeAt(0)
@@ -397,7 +355,6 @@ class Popup(QWidget):
             self.content_layout.addWidget(row)
             self._entry_widgets.append(row)
 
-        # Inject vertical stretch spacer at the bottom
         self.content_layout.addStretch(1)
         self.content_layout.activate()
         
@@ -470,11 +427,9 @@ class Popup(QWidget):
             glosses_str = ", ".join(glosses) if (glosses and config.show_all_glosses) else (glosses[0] if glosses else "")
             tags_list = sense.get('tags', [])
             
-            # Formulate styled line blocks instead of clumping with raw line breaks
             sense_html = f'<div style="margin-bottom: 5px; line-height: 1.45;">'
             sense_html += f'<b>{idx + 1}.</b> ' if config.show_all_glosses else ""
             
-            # Part-of-Speech tags completely excluded
             if config.show_tags and tags_list:
                 tags_str = f'[{", ".join(tags_list)}] '
                 sense_html += f'<span style="color:{c_text}; font-size:{config.font_size_definitions - 2}px; opacity:0.7;">{tags_str}</span>'
@@ -518,9 +473,6 @@ class Popup(QWidget):
 
         return row
 
-    # ------------------------------------------------------------------ #
-    # Mining
-    # ------------------------------------------------------------------ #
     def _make_mine_button(self, entry: DictionaryEntry) -> QPushButton:
         button = QPushButton("+")
         button.setProperty("class", "mineButton")
@@ -571,7 +523,6 @@ class Popup(QWidget):
             self.mine_finished.emit(button, "err", "Set a deck, note type and field mapping in Settings → Anki first")
             return
 
-        # Build clean HTML list containing all meanings
         html_senses = []
         for sense in entry.senses:
             glosses = sense.get('glosses', [])
@@ -586,7 +537,6 @@ class Popup(QWidget):
         
         beautiful_glossary = f"<ol style='margin-top: 2px; margin-bottom: 2px; padding-left: 20px; line-height: 1.45;'>{''.join(html_senses)}</ol>"
 
-        # Native Anki Furigana syntax: Kanji[Kana]
         if entry.written_form != entry.reading:
             furigana_reading = f"{entry.written_form}[{entry.reading}]"
         else:
@@ -655,9 +605,6 @@ class Popup(QWidget):
             button.setToolTip(f"Mining failed: {message}")
             button.setEnabled(True)
 
-    # ------------------------------------------------------------------ #
-    # Positioning / visibility (using fixed 450x600 size constants)
-    # ------------------------------------------------------------------ #
     def move_to(self, x, y):
         cursor_point = QPoint(x, y)
         screen = QApplication.screenAt(cursor_point) or QApplication.primaryScreen()
@@ -669,7 +616,6 @@ class Popup(QWidget):
 
         ratio = screen.devicePixelRatio()
         
-        # Standard cursor-arrow offset adjustments (+4px, +6px)
         adjusted_x = int(x) + 4
         adjusted_y = int(y) + 6
         
